@@ -1,38 +1,40 @@
 # Harbourview
 
-Harbourview is the system of record for commercial intelligence, strategic introductions and market-access operations.
+Harbourview is the regulated market-access operating system for evidence-backed internal workstreams.
 
-## Source of truth
+## Current contents
 
-This repository is the canonical source of truth for:
+This repository now contains a real runnable application baseline instead of only a placeholder README:
 
-- app structure
-- database migrations
-- Supabase functions
-- RLS and permission model
-- RPC contracts
-- operating docs
+- `apps/web`: Next.js App Router app with Supabase SSR authentication wiring
+- root workspace scripts for local development
+- secure environment examples with no committed live secrets
 
-## Initial structure
+## Why this baseline exists
 
-- `app/` Next.js App Router entry points
-- `src/` shared app code
-- `supabase/migrations/` database source of truth
-- `supabase/functions/` Supabase Edge Functions
-- `docs/` platform docs and operating contracts
+The connected GitHub repository was effectively empty apart from the initial README. The first direct change is to establish a working authenticated operator shell so the API, ingestion, rules engine, workflows, and dossier surfaces can land on top of a real structure.
 
-## Principles
+## Local setup
 
-1. Database changes must land through migrations
-2. Human-owned fields must be explicitly protected
-3. Agent writes must go through approved RPCs
-4. Reviewable curation actions must be auditable
-5. Production state should be reproducible from this repo
+1. Copy `apps/web/.env.local.example` to `apps/web/.env.local`
+2. Fill in your real Supabase values
+3. Install dependencies
+4. Start the web app
 
-## Next recommended actions
+```bash
+npm install
+npm run dev:web
+```
 
-1. wire Supabase project linkage
-2. replace placeholder migration with full migration pack
-3. add typed RPC client layer
-4. add auth and role-aware dashboard routes
-5. add CI checks for SQL and app build
+## Required environment variables
+
+```bash
+NEXT_PUBLIC_SUPABASE_URL=https://your-project-ref.supabase.co
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=your-supabase-publishable-key
+```
+
+## Notes
+
+- Do not commit real environment values.
+- Middleware is included to keep Supabase sessions refreshed.
+- This is the clean starting point for the deeper regulated-market backend and workflow layers.
