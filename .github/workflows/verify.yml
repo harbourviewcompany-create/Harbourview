@@ -1,0 +1,98 @@
+name: Verify
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Typecheck, test and build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+  secret-scan:
+    name: Secret scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  agent-workspace-check:
+    name: Agent workspace check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify required agent workspace files
+        shell: bash
+        run: |
+          set -euo pipefail
+          required_files=(
+            "agent-workspace/PROJECT_STATE.md"
+            "agent-workspace/CURRENT_TASK.md"
+            "agent-workspace/HANDOFF_LOG.md"
+            "agent-workspace/DECISIONS.md"
+            "agent-workspace/OPEN_ISSUES.md"
+            "agent-workspace/VERIFY_COMMANDS.md"
+            "agent-workspace/LAST_RUN.md"
+            "agent-workspace/LOCK.md"
+            "agent-workspace/TASK_INDEX.md"
+            "agent-workspace/DEFINITION_OF_DONE.md"
+            "agent-workspace/MIGRATION_POLICY.md"
+            "agent-workspace/SECRETS_POLICY.md"
+            "agent-workspace/CONFLICT_RULES.md"
+            "agent-workspace/ROLLBACK.md"
+          )
+
+          for file in "${required_files[@]}"; do
+            if [[ ! -s "$file" ]]; then
+              echo "Missing or empty required file: $file"
+              exit 1
+            fi
+          done
+
+      - name: Verify PR template exists
+        shell: bash
+        run: test -s .github/pull_request_template.md
+
+      - name: Verify agent task issue template exists
+        shell: bash
+        run: test -s .github/ISSUE_TEMPLATE/agent-task.md
