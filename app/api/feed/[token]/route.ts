@@ -1,138 +1,87 @@
 // app/api/feed/[token]/route.ts
-// Harbourview Production Spine — JSON feed endpoint
-// ADR-001 D4: client delivery mechanism. No client UI. Clients consume this endpoint.
-// Authentication: scoped api_token from publish_events table.
-// Internal notes are NEVER included in the response.
-//
-// REVOCATION MODEL (OI-7 fix):
-//   Revocation is an append-only INSERT row (status='revoked', revokes_event_id=original.id).
-//   The original publish_events row is immutable — its status field never changes.
-//   Detection: query for a revocation row WHERE revokes_event_id = publishEvent.id.
-//   Do NOT check publishEvent.status — it will always read 'completed'.
+// Public JSON feed endpoint. Uses hashed token lookup, expiry, revocation and recursive field sanitization.
 
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { attachSecurityHeaders, jsonError } from "@/lib/security/http";
+import { checkRateLimit, getClientIp } from "@/lib/security/rate-limit";
+import { constantTimeEqualHex, isValidBearerTokenShape, sha256Hex } from "@/lib/security/tokens";
+import { sanitizeFeedSnapshot } from "@/lib/feed/sanitize";
 
-export async function GET(
-  request: NextRequest,
-  { params }: { params: Promise<{ token: string }> }
-) {
-  const { token } = await params;
+export const dynamic = "force-dynamic";
 
-  if (!token || typeof token !== "string" || token.length < 10) {
-    return NextResponse.json(
-      { error: "Invalid or missing feed token" },
-      { status: 400 }
-    );
-  }
+type RouteContext = {
+  params: Promise<{ token: string }>;
+};
 
-  // Use service client — feed tokens bypass RLS by design,
-  // but we gate on token validity and revocation status.
-  const supabase = createServiceClient();
-
-  const { data: publishEvent, error } = await supabase
-    .from("publish_events")
-    .select("id, snapshot_json, dossier_id, workspace_id, created_at")
-    .eq("api_token", token)
-    .eq("status", "completed")
-    .maybeSingle();
-
-  if (error) {
-    console.error("[feed] DB error:", error.message);
-    return NextResponse.json(
-      { error: "Feed unavailable" },
-      { status: 503 }
-    );
-  }
-
-  if (!publishEvent) {
-    // Return 404 — do not distinguish between invalid token and not-yet-published
-    return NextResponse.json(
-      { error: "Feed not found" },
-      { status: 404 }
-    );
-  }
-
-  // Revocation check: look for an append-only revocation row referencing this event.
-  // The original row is immutable — revocation is always a new INSERT.
-  const { data: revocationRow, error: revErr } = await supabase
-    .from("publish_events")
-    .select("id")
-    .eq("revokes_event_id", publishEvent.id)
-    .eq("status", "revoked")
-    .maybeSingle();
-
-  if (revErr) {
-    console.error("[feed] revocation check error:", revErr.message);
-    return NextResponse.json(
-      { error: "Feed unavailable" },
-      { status: 503 }
-    );
-  }
-
-  if (revocationRow) {
-    return NextResponse.json(
-      {
-        error: "This feed has been revoked. Contact your Harbourview representative.",
-        revoked: true,
-      },
-      { status: 410 } // 410 Gone — semantically correct for revoked content
-    );
-  }
-
-  const snapshot = publishEvent.snapshot_json as Record<string, unknown>;
-
-  // Final safety check: strip any internal_notes fields that may have
-  // been accidentally included in the snapshot at publish time.
-  const sanitized = sanitizeSnapshot(snapshot);
-
-  return NextResponse.json(
-    {
-      meta: {
-        feed_id: publishEvent.id,
-        published_at: (sanitized.published_at as string) ?? publishEvent.created_at,
-        effective_at: sanitized.effective_at ?? null,
-        version_number: sanitized.version_number ?? 1,
-      },
-      dossier: sanitized,
-    },
-    {
-      status: 200,
+function feedJson(body: unknown, status = 200): NextResponse {
+  return attachSecurityHeaders(
+    NextResponse.json(body, {
+      status,
       headers: {
-        "Content-Type": "application/json",
-        // Prevent caching of intelligence feeds
         "Cache-Control": "no-store, no-cache, must-revalidate",
-        "X-Harbourview-Feed": "v1",
+        "Content-Type": "application/json",
+        "X-Harbourview-Feed": "v2",
       },
-    }
+    })
   );
 }
 
-// Recursively strip internal_notes and analyst_notes from any level of the snapshot
-function sanitizeSnapshot(obj: unknown): Record<string, unknown> {
-  if (typeof obj !== "object" || obj === null) return obj as any;
+export async function GET(request: NextRequest, context: RouteContext) {
+  const ip = getClientIp(request);
 
-  if (Array.isArray(obj)) {
-    return obj.map(sanitizeSnapshot) as unknown as Record<string, unknown>;
+  try {
+    const rateLimit = await checkRateLimit(ip, { namespace: "public-feed", limit: 60, windowSeconds: 60 });
+    if (!rateLimit.allowed) return jsonError("Too many requests", 429);
+  } catch {
+    return jsonError("Feed temporarily unavailable", 503);
   }
 
-  const record = obj as Record<string, unknown>;
-  const sanitized: Record<string, unknown> = {};
+  const { token } = await context.params;
+  const candidateToken = typeof token === "string" ? token.trim() : "";
 
-  const BLOCKED_FIELDS = new Set([
-    "internal_notes",
-    "analyst_notes",
-    "reviewer_notes",
-    "item_notes",      // dossier_items editorial note — never client-visible (test G9)
-  ]);
-
-  for (const [key, value] of Object.entries(record)) {
-    if (BLOCKED_FIELDS.has(key)) continue;
-    sanitized[key] =
-      typeof value === "object" && value !== null
-        ? sanitizeSnapshot(value)
-        : value;
+  if (!isValidBearerTokenShape(candidateToken)) {
+    return jsonError("Feed not found", 404);
   }
 
-  return sanitized;
+  const tokenHash = sha256Hex(candidateToken);
+  const supabase = createServiceClient();
+  const now = new Date().toISOString();
+
+  const { data: feedToken, error } = await supabase
+    .from("public_feed_tokens")
+    .select("id, token_hash, status, expires_at, revoked_at, snapshot, created_at")
+    .eq("token_hash", tokenHash)
+    .eq("status", "active")
+    .is("revoked_at", null)
+    .gt("expires_at", now)
+    .maybeSingle();
+
+  if (error || !feedToken) {
+    return jsonError("Feed not found", 404);
+  }
+
+  const storedHash = typeof feedToken.token_hash === "string" ? feedToken.token_hash : "";
+  if (!constantTimeEqualHex(tokenHash, storedHash)) {
+    return jsonError("Feed not found", 404);
+  }
+
+  const sanitized = sanitizeFeedSnapshot(feedToken.snapshot);
+
+  await supabase.from("public_feed_token_access_events").insert({
+    public_feed_token_id: feedToken.id,
+    accessed_at: now,
+    ip_hash: sha256Hex(ip),
+    user_agent: request.headers.get("user-agent")?.slice(0, 512) ?? null,
+  });
+
+  return feedJson({
+    meta: {
+      feed_id: feedToken.id,
+      issued_at: feedToken.created_at,
+      expires_at: feedToken.expires_at,
+      version: 2,
+    },
+    dossier: sanitized,
+  });
 }
