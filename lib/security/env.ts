@@ -5,6 +5,16 @@ type PublicSupabaseEnv = {
   isProduction: boolean;
 };
 
+type ServiceRoleEnv = {
+  supabaseUrl: string;
+  serviceRoleKey: string;
+};
+
+type RedisEnv = {
+  redisRestUrl: string;
+  redisRestToken: string;
+};
+
 function cleanEnv(name: string): string | null {
   const value = process.env[name]?.trim();
   return value && !value.startsWith("your-") ? value : null;
@@ -57,11 +67,30 @@ export function getPublicSupabaseEnv(): PublicSupabaseEnv {
   };
 }
 
+export function getServiceRoleEnv(): ServiceRoleEnv {
+  assertNoPublicSecretExposure();
+  return {
+    supabaseUrl: requireHttpUrl("NEXT_PUBLIC_SUPABASE_URL"),
+    serviceRoleKey: requireEnv("SUPABASE_SERVICE_ROLE_KEY"),
+  };
+}
+
+export function getRedisEnv(): RedisEnv {
+  return {
+    redisRestUrl: requireHttpUrl("UPSTASH_REDIS_REST_URL"),
+    redisRestToken: requireEnv("UPSTASH_REDIS_REST_TOKEN"),
+  };
+}
+
+export function hasRedisEnv(): boolean {
+  return Boolean(cleanEnv("UPSTASH_REDIS_REST_URL") && cleanEnv("UPSTASH_REDIS_REST_TOKEN"));
+}
+
 export function assertNoPublicSecretExposure(): void {
   for (const [key, value] of Object.entries(process.env)) {
     if (!key.startsWith("NEXT_PUBLIC_")) continue;
     const normalized = `${key}=${value ?? ""}`.toLowerCase();
-    if (normalized.includes("service_role") || normalized.includes("sb_secret_")) {
+    if (normalized.includes("service_role") || normalized.includes("sb_secret_") || normalized.includes("upstash") || normalized.includes("redis_rest_token")) {
       throw new Error(`Public environment variable appears to expose a secret: ${key}`);
     }
   }
