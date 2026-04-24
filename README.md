@@ -1,40 +1,31 @@
-# Harbourview
+# Harbourview wired Next.js UI pack
 
-Harbourview is the regulated market-access operating system for evidence-backed internal workstreams.
+This pack converts the standalone Harbourview HTML shell into a real Next.js App Router UI backed by the existing Supabase server actions and adds a dedicated read-model layer plus internal JSON routes.
 
-## Current contents
+## What is included
 
-This repository now contains a real runnable application baseline instead of only a placeholder README:
+- Real operator pages for overview, sources, signals, review queue, dossiers, audit log and publish preview
+- Read-model query layer under `lib/queries/*`
+- Internal API routes under `app/api/internal/*`
+- Publish preview validator under `lib/publish/validate.ts`
+- Tokened client feed route under `app/api/feed/[token]/route.ts`
 
-- `apps/web`: Next.js App Router app with Supabase SSR authentication wiring
-- root workspace scripts for local development
-- secure environment examples with no committed live secrets
+## Important implementation notes
 
-## Why this baseline exists
+1. The new signal form requires a real `source_document_id`. This pack does not guess one.
+3. The publish preview blocks publication when signals are not approved or do not have human evidence.
+4. The internal API routes assume authenticated operator access via middleware.
 
-The connected GitHub repository was effectively empty apart from the initial README. The first direct change is to establish a working authenticated operator shell so the API, ingestion, rules engine, workflows, and dossier surfaces can land on top of a real structure.
+## Suggested next patch
 
-## Local setup
+- review queue status flow normalized for v1: submit creates `pending` and admin approve/reject resolves that same queue item
+- signal evidence form uses a real source-document picker instead of free-text UUID entry
+- add toast/error surfaces for server action failures
+- replace free-text `source_document_id` entry with a searchable document picker
 
-1. Copy `apps/web/.env.local.example` to `apps/web/.env.local`
-2. Fill in your real Supabase values
-3. Install dependencies
-4. Start the web app
 
-```bash
-npm install
-npm run dev:web
-```
+## Latest patch
 
-## Required environment variables
-
-```bash
-NEXT_PUBLIC_SUPABASE_URL=https://your-project-ref.supabase.co
-NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=your-supabase-publishable-key
-```
-
-## Notes
-
-- Do not commit real environment values.
-- Middleware is included to keep Supabase sessions refreshed.
-- This is the clean starting point for the deeper regulated-market backend and workflow layers.
+- Added post-create evidence attachment on the signal detail page.
+- Reused the real source-document picker so operators attach evidence against actual source documents rather than free-text IDs.
+- Added state-aware gating on the signal detail actions so submit, approve and reject only activate in the correct review state.

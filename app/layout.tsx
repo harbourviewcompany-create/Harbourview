@@ -1,9 +1,9 @@
-import type { Metadata } from 'next';
-import './globals.css';
+import type { Metadata } from "next";
+import "./globals.css";
 
 export const metadata: Metadata = {
-  title: 'Harbourview',
-  description: 'Commercial intelligence and market access operations platform'
+  title: "Harbourview",
+  description: "Evidence-first intelligence platform",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
