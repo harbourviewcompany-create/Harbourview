@@ -1,0 +1,12 @@
+# Default owner for all repository changes
+* @harbourviewcompany-create
+
+# Agent operating layer
+/agent-workspace/ @harbourviewcompany-create
+/.github/ @harbourviewcompany-create
+
+# Security-sensitive areas
+/supabase/ @harbourviewcompany-create
+/supabase/functions/ @harbourviewcompany-create
+/app/api/ @harbourviewcompany-create
+/lib/security/ @harbourviewcompany-create
