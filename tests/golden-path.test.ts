@@ -15,20 +15,21 @@
 //   TEST_ANALYST_EMAIL / TEST_ANALYST_PASSWORD
 //   APP_URL
 
-import { createClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { describe, it, expect, beforeAll } from "vitest";
 import { publishDossier, revokePublishEvent } from "@/lib/actions/dossiers";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const SERVICE_KEY  = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+type TestSupabaseClient = SupabaseClient<any, "public", any>;
 
 // Service client — bypasses RLS, used for setup/verification queries only
-const service = createClient(SUPABASE_URL, SERVICE_KEY, {
+const service: TestSupabaseClient = createClient<any, "public", any>(SUPABASE_URL, SERVICE_KEY, {
   auth: { autoRefreshToken: false, persistSession: false },
 });
 
-async function signIn(email: string, password: string) {
-  const client = createClient(
+async function signIn(email: string, password: string): Promise<TestSupabaseClient> {
+  const client: TestSupabaseClient = createClient<any, "public", any>(
     SUPABASE_URL,
     process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!
   );
@@ -40,19 +41,19 @@ async function signIn(email: string, password: string) {
 // ================================================================
 // Shared state — populated as tests run in sequence
 // ================================================================
-let adminClient:   ReturnType<typeof createClient>;
-let analystClient: ReturnType<typeof createClient>;
+let adminClient: TestSupabaseClient;
+let analystClient: TestSupabaseClient;
 
-let sourceId:       string;
-let documentId:     string;
-let signalId:       string;
-let dossierId:      string;
+let sourceId: string;
+let documentId: string;
+let signalId: string;
+let dossierId: string;
 let publishEventId: string;
-let apiToken:       string;
-let workspaceId:    string;
+let apiToken: string;
+let workspaceId: string;
 
 beforeAll(async () => {
-  adminClient   = await signIn(process.env.TEST_ADMIN_EMAIL!,   process.env.TEST_ADMIN_PASSWORD!);
+  adminClient = await signIn(process.env.TEST_ADMIN_EMAIL!, process.env.TEST_ADMIN_PASSWORD!);
   analystClient = await signIn(process.env.TEST_ANALYST_EMAIL!, process.env.TEST_ANALYST_PASSWORD!);
 
   // Resolve seed workspace ID by slug (set in 0009_seed_data.sql)
@@ -210,7 +211,7 @@ describe("Golden path", () => {
     const result = await publishDossier({ dossier_id: dossierId, _supabase: adminClient });
 
     publishEventId = result.publishEvent.id;
-    apiToken       = result.apiToken;
+    apiToken = result.apiToken;
 
     expect(result.publishEvent).toBeDefined();
     expect(result.apiToken).toMatch(/^hvfeed_/);
@@ -224,8 +225,8 @@ describe("Golden path", () => {
   });
 
   it("9. JSON feed returns snapshot for valid token; no internal fields present", async () => {
-    const res     = await fetch(`${process.env.APP_URL}/api/feed/${apiToken}`);
-    const body    = await res.json();
+    const res = await fetch(`${process.env.APP_URL}/api/feed/${apiToken}`);
+    const body = await res.json();
     const bodyStr = JSON.stringify(body);
 
     expect(res.status).toBe(200);
@@ -246,7 +247,7 @@ describe("Golden path", () => {
       .select("action_type")
       .eq("entity_id", signalId);
 
-    const actions = data?.map((r) => r.action_type) ?? [];
+    const actions = data?.map((r: { action_type: string }) => r.action_type) ?? [];
     expect(actions).toContain("create");
     expect(actions).toContain("submit_for_review");
     expect(actions).toContain("approve");
@@ -328,8 +329,8 @@ describe("Negative path", () => {
     // block_publish_event_mutation() rejects all updates including via service role.
     await revokePublishEvent({
       publish_event_id: publishEventId,
-      revoke_reason:    "Test revocation — N4 negative path",
-      _supabase:        adminClient,
+      revoke_reason: "Test revocation — N4 negative path",
+      _supabase: adminClient,
     });
 
     // Revocation row must exist and reference the original
@@ -352,7 +353,7 @@ describe("Negative path", () => {
     expect(original!.status).toBe("completed");
 
     // Feed returns 410 Gone for the revoked token
-    const res  = await fetch(`${process.env.APP_URL}/api/feed/${apiToken}`);
+    const res = await fetch(`${process.env.APP_URL}/api/feed/${apiToken}`);
     const body = await res.json();
     expect(res.status).toBe(410);
     expect(body.revoked).toBe(true);
@@ -391,8 +392,8 @@ describe("Negative path", () => {
     await expect(
       revokePublishEvent({
         publish_event_id: publishEventId,
-        revoke_reason:    "Second revocation attempt",
-        _supabase:        adminClient,
+        revoke_reason: "Second revocation attempt",
+        _supabase: adminClient,
       })
     ).rejects.toThrow("already been revoked");
   });
