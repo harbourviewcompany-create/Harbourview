@@ -25,3 +25,13 @@ export async function getDashboardStats() {
     workspaces: workspaces.count ?? 0,
   };
 }
+
+export async function getRecentSignals(limit: number = 8) {
+  const { supabase } = await getScopedSupabase();
+  const { data } = await supabase
+    .from("signals")
+    .select("id, title, review_status, confidence_level, created_at, entity_name, entity_org")
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  return data ?? [];
+}
