@@ -1,50 +1,49 @@
 // middleware.ts
-// Protects all /app/* routes. Unauthenticated requests redirect to /login.
-// The JSON feed at /api/feed/* is intentionally excluded — it uses token auth.
-// Public paths: /login, /auth/*, /api/feed/*
+// Authenticates operator UI routes and attaches baseline security headers.
+// Public paths: /login and /auth/*.
+// Token-gated APIs must perform their own explicit token validation in route handlers.
 
 import { createServerClient } from "@supabase/ssr";
 import { NextRequest, NextResponse } from "next/server";
+import { getPublicSupabaseEnv, assertNoPublicSecretExposure } from "@/lib/security/env";
+import { attachSecurityHeaders, isSafeRelativePath } from "@/lib/security/http";
 
 const PUBLIC_PATHS = ["/login", "/auth"];
-const TOKEN_FEED_PATH = "/api/feed";
+const TOKEN_GATED_API_PATHS = ["/api/feed"];
+
+function isPublicPath(pathname: string): boolean {
+  return PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`));
+}
+
+function isTokenGatedApiPath(pathname: string): boolean {
+  return TOKEN_GATED_API_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`));
+}
 
 export async function middleware(request: NextRequest) {
+  assertNoPublicSecretExposure();
+  const env = getPublicSupabaseEnv();
   const { pathname } = request.nextUrl;
 
-  // Always allow public paths and the token-gated feed
-  if (
-    PUBLIC_PATHS.some((p) => pathname.startsWith(p)) ||
-    pathname.startsWith(TOKEN_FEED_PATH)
-  ) {
-    return NextResponse.next();
+  if (isPublicPath(pathname) || isTokenGatedApiPath(pathname)) {
+    return attachSecurityHeaders(NextResponse.next());
   }
 
-  // For all other paths, verify session
   let response = NextResponse.next({
     request: { headers: request.headers },
   });
 
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!,
-    {
-      cookies: {
-        getAll() {
-          return request.cookies.getAll();
-        },
-        setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value }) =>
-            request.cookies.set(name, value)
-          );
-          response = NextResponse.next({ request });
-          cookiesToSet.forEach(({ name, value, options }) =>
-            response.cookies.set(name, value, options)
-          );
-        },
+  const supabase = createServerClient(env.supabaseUrl, env.supabasePublishableKey, {
+    cookies: {
+      getAll() {
+        return request.cookies.getAll();
       },
-    }
-  );
+      setAll(cookiesToSet) {
+        cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value));
+        response = NextResponse.next({ request });
+        cookiesToSet.forEach(({ name, value, options }) => response.cookies.set(name, value, options));
+      },
+    },
+  });
 
   const {
     data: { user },
@@ -53,22 +52,14 @@ export async function middleware(request: NextRequest) {
   if (!user) {
     const loginUrl = request.nextUrl.clone();
     loginUrl.pathname = "/login";
-    // Preserve intended destination so we can redirect back after login (future enhancement)
-    loginUrl.searchParams.set("next", pathname);
-    return NextResponse.redirect(loginUrl);
+    loginUrl.search = "";
+    loginUrl.searchParams.set("next", isSafeRelativePath(pathname) ? pathname : "/app");
+    return attachSecurityHeaders(NextResponse.redirect(loginUrl, { status: 303 }));
   }
 
-  return response;
+  return attachSecurityHeaders(response);
 }
 
 export const config = {
-  matcher: [
-    /*
-     * Match all paths except:
-     * - _next/static (static files)
-     * - _next/image (image optimisation)
-     * - favicon.ico
-     */
-    "/((?!_next/static|_next/image|favicon.ico).*)",
-  ],
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml).*)"],
 };
