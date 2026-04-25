@@ -1,0 +1,119 @@
+name: Verify
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Typecheck, test and build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npx vitest run --exclude=**/golden-path.test.ts
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL || secrets.SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || secrets.SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          TEST_ADMIN_EMAIL: ${{ secrets.TEST_ADMIN_EMAIL }}
+          TEST_ADMIN_PASSWORD: ${{ secrets.TEST_ADMIN_PASSWORD }}
+          TEST_ANALYST_EMAIL: ${{ secrets.TEST_ANALYST_EMAIL }}
+          TEST_ANALYST_PASSWORD: ${{ secrets.TEST_ANALYST_PASSWORD }}
+          APP_URL: ${{ secrets.APP_URL }}
+
+      - name: Build
+        run: npm run build
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
+          NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ci-public-key
+          SUPABASE_SERVICE_ROLE_KEY: ci-service-role-key
+          APP_URL: http://localhost:3000
+          NODE_ENV: production
+          UPSTASH_REDIS_REST_URL: https://example.upstash.io
+          UPSTASH_REDIS_REST_TOKEN: ci-redis-token
+
+  secret-scan:
+    name: Secret scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+
+  agent-workspace-check:
+    name: Agent workspace check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify required agent workspace files
+        shell: bash
+        run: |
+          set -euo pipefail
+          required_files=(
+            "agent-workspace/PROJECT_STATE.md"
+            "agent-workspace/CURRENT_TASK.md"
+            "agent-workspace/HANDOFF_LOG.md"
+            "agent-workspace/DECISIONS.md"
+            "agent-workspace/OPEN_ISSUES.md"
+            "agent-workspace/VERIFY_COMMANDS.md"
+            "agent-workspace/LAST_RUN.md"
+            "agent-workspace/LOCK.md"
+            "agent-workspace/TASK_INDEX.md"
+            "agent-workspace/DEFINITION_OF_DONE.md"
+            "agent-workspace/MIGRATION_POLICY.md"
+            "agent-workspace/SECRETS_POLICY.md"
+            "agent-workspace/CONFLICT_RULES.md"
+            "agent-workspace/ROLLBACK.md"
+          )
+
+          for file in "${required_files[@]}"; do
+            if [[ ! -s "$file" ]]; then
+              echo "Missing or empty required file: $file"
+              exit 1
+            fi
+          done
+
+      - name: Verify PR template exists
+        shell: bash
+        run: test -s .github/pull_request_template.md
+
+      - name: Verify agent task issue template exists
+        shell: bash
+        run: test -s .github/ISSUE_TEMPLATE/agent-task.md
